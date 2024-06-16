@@ -31,20 +31,19 @@ def main():
     # import ipdb; ipdb.set_trace()
     parser = HfArgumentParser(
         (ModelArguments, DataArguments, TrainingArguments))
-    
+
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         model_args, data_args, training_args = parser.parse_json_file(
             json_file=os.path.abspath(sys.argv[1]))
     else:
         # 走的这里
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-        
+
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         # 自己加的为了能够跑llama3-8b
         # if "llama3-8b" in training_args.output_dir:
         #     training_args.gradient_accumulation_steps=32
         #     training_args.per_device_eval_batch_size=1  
-
 
     # Setup logging
     logging.basicConfig(
@@ -73,8 +72,6 @@ def main():
     logger.info(f"Model parameters {model_args}")
     logger.info(f"Dataset parameters {data_args}")
 
-
-
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
@@ -86,9 +83,8 @@ def main():
                                          sample_percentage=data_args.percentage,
                                          seed=data_args.sample_data_seed)
 
-    
     model = AutoModelForCausalLM.from_pretrained(model_args.model_name_or_path, torch_dtype=model_args.torch_dtype)
-    
+
     # 大多数深度学习模型需要输入具有固定长度。为了解决这个问题，可以通过添加特殊的填充标记来使所有文本长度一致，好像是没有用到的
     add_padding_to_tokenizer(tokenizer)
 
@@ -120,9 +116,7 @@ def main():
             target_modules=model_args.lora_target_modules,
         )
         model = get_peft_model(model, lora_config)
-        logger.info(
-            f"Applied LoRA to model."
-        )
+        logger.info(f"Applied LoRA to model.")
         model.print_trainable_parameters()
 
         # for checkpointing
@@ -131,21 +125,18 @@ def main():
         else:
             def make_inputs_require_grad(module, input, output):
                 output.requires_grad_(True)
+
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
-
-
 
     get_data_statistics(train_dataset)
 
     if "dataset" in train_dataset.features:
         train_dataset = train_dataset.remove_columns(
             ["dataset", "id", "messages"])
-            
 
     for index in random.sample(range(len(train_dataset)), 1):
         logger.info(
             f"Sample {index} of the training set: {train_dataset[index]}.")
-
 
     model_params = sum(p.numel()
                        for p in model.parameters() if p.requires_grad)
@@ -175,7 +166,6 @@ def main():
     elif not dist.is_initialized():
         print("22222")
         # print(model)
-
 
     print(training_args)
     # import ipdb; ipdb.set_trace()

@@ -16,6 +16,7 @@ from transformers import RobertaModel
 # 用于输出的一些设置
 has_print_size = False
 
+
 def prepare_batch(batch, device=torch.device("cuda:0")):
     """ Move the batch to the device. """
     for key in batch:
@@ -199,14 +200,20 @@ def collect_grads(dataloader,
         current_full_grads = torch.stack(current_full_grads).to(torch.float16)
         for i, projector in enumerate(projectors):
             # 遍历 projectors 列表中的每一个投影器 projector，将 current_full_grads 投影到 projector 的维度 proj_dim[i] 上。
-            current_projected_grads = projector.project(current_full_grads, model_id=model_id)
+            # note 设置映射的维度为1时，不进行映射，直接保存
+            if proj_dim[i] != 1:
+                current_projected_grads = projector.project(current_full_grads, model_id=model_id)
+            else:
+                current_projected_grads = current_full_grads
             projected_grads[proj_dim[i]].append(current_projected_grads.cpu())
 
     def _save(projected_grads, output_dirs):
         # 将 projected_grads 中的梯度保存到 output_dirs 中。
         for dim in proj_dim:
+            # 没有数据的话，就不处理
             if len(projected_grads[dim]) == 0:
                 continue
+
             # 因为 projected_grads[dim] 是一个列表，所以需要将其中的所有张量拼接成一个张量。且不会新增一个维度（stack会）
             projected_grads[dim] = torch.cat(projected_grads[dim])
 
