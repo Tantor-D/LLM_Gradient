@@ -158,7 +158,7 @@ if args.task is not None:
                           sample_kind=None) # order/random/None    
     dataloader = get_dataloader(dataset, tokenizer=tokenizer)
 else:
-    # 走的这里
+    # “训练数据”走的这里
     print("args.train_file: " + args.train_file)
     assert args.train_file is not None
     dataset = get_training_dataset(

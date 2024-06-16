@@ -13,6 +13,8 @@ from tqdm import tqdm
 from trak.projectors import BasicProjector, CudaProjector, ProjectionType
 from transformers import RobertaModel
 
+# 用于输出的一些设置
+has_print_size = False
 
 def prepare_batch(batch, device=torch.device("cuda:0")):
     """ Move the batch to the device. """
@@ -47,7 +49,7 @@ def get_output(model,
                labels=None,
                ) -> Tensor:
     logits = model(weights, buffers, *(input_ids.unsqueeze(0),
-                   attention_mask.unsqueeze(0))).logits
+                                       attention_mask.unsqueeze(0))).logits
     labels = labels.unsqueeze(0)
     loss_fct = F.cross_entropy
     shift_logits = logits[..., :-1, :].contiguous()
@@ -59,15 +61,19 @@ def get_output(model,
 
 def get_trak_projector(device: torch.device):
     """ Get trak projectors (see https://github.com/MadryLab/trak for details) """
+    """
+    CudaProjector 类主要用于将梯度或特征进行投影操作。这通常包括将高维梯度或特征映射到低维空间，从而减少计算复杂度或实现某些降维效果。
+    CudaProjector 类可能提供多种投影方法，如随机投影、主成分分析（PCA）、线性判别分析（LDA）等。用户可以根据具体需求选择适合的投影方法。
+    CudaProjector 可能与深度学习框架（如 PyTorch）紧密集成，方便用户在训练神经网络时进行梯度投影操作。
+    """
+
     # 根据是否用显卡当以不同的投影器
     try:
-        num_sms = torch.cuda.get_device_properties(
-            device.index).multi_processor_count
+        num_sms = torch.cuda.get_device_properties(device.index).multi_processor_count
         import fast_jl
 
         # test run to catch at init time if projection goes through
-        fast_jl.project_rademacher_8(torch.zeros(
-            8, 1_000, device=device), 512, 0, num_sms)
+        fast_jl.project_rademacher_8(torch.zeros(8, 1_000, device=device), 512, 0, num_sms)
         projector = CudaProjector
         print("Using CudaProjector")
     except:
@@ -78,12 +84,25 @@ def get_trak_projector(device: torch.device):
 
 def get_number_of_params(model):
     """ Make sure that only lora parameters require gradients in peft models. """
+    """
+    首先，函数检查输入的 model 是否是 PeftModel 类型。
+    如果是 PeftModel 类型，它会进一步检查模型中是否存在不应该需要梯度的参数。
+    
+    检查非LoRA参数是否需要梯度：
+    对于 PeftModel 类型的模型，函数会遍历所有参数的名称和对应的参数值，筛选出那些需要梯度且名称中不包含“lora”的参数。
+    如果发现这样的参数存在，函数会通过断言（assert）引发一个错误，以确保在 PEFT 模型中，只有 LoRA 参数需要梯度。
+    
+    计算需要梯度的参数数量：
+    无论模型是否为 PeftModel 类型，函数都会计算并返回模型中所有需要梯度的参数的数量。
+    它通过遍历 model.parameters() 并对需要梯度的参数的元素数量（numel()）求和来实现这一点。
+    """
+    # todo 这些参数到底长什么样子要调试来看看
     if isinstance(model, PeftModel):
         names = [n for n, p in model.named_parameters(
         ) if p.requires_grad and "lora" not in n]
         assert len(names) == 0
     num_params = sum([p.numel()
-                     for p in model.parameters() if p.requires_grad])
+                      for p in model.parameters() if p.requires_grad])
     print(f"Total number of parameters that require gradients: {num_params}")
     return num_params
 
@@ -92,8 +111,7 @@ def obtain_gradients(model, batch):
     """ obtain gradients. """
     loss = model(**batch).loss
     loss.backward()
-    vectorized_grads = torch.cat(
-        [p.grad.view(-1) for p in model.parameters() if p.grad is not None])
+    vectorized_grads = torch.cat([p.grad.view(-1) for p in model.parameters() if p.grad is not None])
     return vectorized_grads
 
 
@@ -118,8 +136,16 @@ def obtain_gradients_with_adam(model, batch, avg, avg_sq):
     loss = model(**batch).loss
     loss.backward()
 
-    vectorized_grads = torch.cat(
-        [p.grad.view(-1) for n, p in model.named_parameters() if p.grad is not None])
+    # model.named_parameters() 返回一个生成器，生成模型中所有参数的名称和参数值对。
+    # n 是参数的名称，p 是参数的张量
+    # 检查每个参数 p 是否有对应的梯度（即 p.grad 是否为 None）
+    # 将每个参数 p 的梯度 p.grad 展平为一维向量。view(-1) 将张量展平为一维。
+    # 最后用到了torch.cat()函数，将所有参数的梯度拼接成一个张量。
+    # torch.cat 意味着除了在拼接的维度上，所有的维度都是相同的
+    # 也就是说，这里把一个数据的梯度统一的拼接到了一起，成了一个shape为(x,)的向量
+    vectorized_grads = torch.cat([p.grad.view(-1) for n, p in model.named_parameters() if p.grad is not None])
+
+    # 由于每一层的梯度的维度都一样，因此只需要知道每一层的梯度的维度，然后知道拼接的顺序，就可以知道每一层的梯度在vectorized_grads中的位置
 
     updated_avg = beta1 * avg + (1 - beta1) * vectorized_grads
     updated_avg_sq = beta2 * avg_sq + (1 - beta2) * vectorized_grads ** 2
@@ -133,7 +159,7 @@ def prepare_optimizer_state(model, optimizer_state, device):
     names = [n for n, p in model.named_parameters() if p.requires_grad]
     avg = torch.cat([optimizer_state[n]["exp_avg"].view(-1) for n in names])
     avg_sq = torch.cat([optimizer_state[n]["exp_avg_sq"].view(-1)
-                       for n in names])
+                        for n in names])
     avg = avg.to(device)
     avg_sq = avg_sq.to(device)
     return avg, avg_sq
@@ -148,6 +174,7 @@ def collect_grads(dataloader,
                   max_samples: Optional[int] = None):
     """
     Collects gradients from the model during evaluation and saves them to disk.
+    这个函数只会处理一个checkpoint时的梯度，所以在上层需要使用脚本多次调用这个函数来获取多个梯度。
 
     Args:
         dataloader (torch.utils.data.DataLoader): The data loader for evaluation dataset.
@@ -168,23 +195,27 @@ def collect_grads(dataloader,
     save_interval = 160  # save every 160 batches
 
     def _project(current_full_grads, projected_grads):
+        # 将 current_full_grads 列表中的所有梯度堆叠成一个张量。
         current_full_grads = torch.stack(current_full_grads).to(torch.float16)
         for i, projector in enumerate(projectors):
-            current_projected_grads = projector.project(
-                current_full_grads, model_id=model_id)
+            # 遍历 projectors 列表中的每一个投影器 projector，将 current_full_grads 投影到 projector 的维度 proj_dim[i] 上。
+            current_projected_grads = projector.project(current_full_grads, model_id=model_id)
             projected_grads[proj_dim[i]].append(current_projected_grads.cpu())
 
     def _save(projected_grads, output_dirs):
+        # 将 projected_grads 中的梯度保存到 output_dirs 中。
         for dim in proj_dim:
             if len(projected_grads[dim]) == 0:
                 continue
+            # 因为 projected_grads[dim] 是一个列表，所以需要将其中的所有张量拼接成一个张量。且不会新增一个维度（stack会）
             projected_grads[dim] = torch.cat(projected_grads[dim])
 
             output_dir = output_dirs[dim]
             outfile = os.path.join(output_dir, f"grads-{count}.pt")
+
+            # 对梯度进行保存，注意保存完后要从 projected_grads里删掉
             torch.save(projected_grads[dim], outfile)
-            print(
-                f"Saving {outfile}, {projected_grads[dim].shape}", flush=True)
+            print(f"Saving {outfile}, {projected_grads[dim].shape}", flush=True)
             projected_grads[dim] = []
 
     device = next(model.parameters()).device
@@ -192,19 +223,17 @@ def collect_grads(dataloader,
 
     print("dtype: " + str(dtype))
 
-
     # prepare optimization states
     if gradient_type == "adam":
         assert adam_optimizer_state is not None
         # first and second moment estimates
+        # 这个函数只会处理一个checkpoint时的梯度，所以在上层需要使用脚本多次调用这个函数来获取多个梯度
+        # 由于是一个checkpoint，因此直接加载就好，后续也不用变，整个checkpoint计算时都是一样的
         m, v = prepare_optimizer_state(model, adam_optimizer_state, device)
 
+    # 这个projector是一个构造函数，具体是用于确定是用trak'库的CudaProjector还是BasicProjector
     projector = get_trak_projector(device)
     number_of_params = get_number_of_params(model)
-
-    # never made it work sadly
-    # fmodel, params, buffers = make_functional_with_buffers(model)
-    # grads_loss = torch.func.grad(get_output, has_aux=False, argnums=1)
 
     # initialize a project for each target projector dimension
     projectors = []
@@ -228,24 +257,22 @@ def collect_grads(dataloader,
         output_dirs[dim] = output_dir_per_dim
         os.makedirs(output_dir_per_dim, exist_ok=True)
 
-    # max index for each dimension
+    # max index for each dimension，用于训练中断后跳过已经做过的
     max_index = min(get_max_saved_index(output_dirs[dim], "grads") for dim in proj_dim)
-    
+
     # projected_gradients
     full_grads = []  # full gradients
-    projected_grads = {dim: [] for dim in proj_dim}  # projected gradients
-
+    projected_grads = {dim: [] for dim in proj_dim}  # projected gradients，是一个字典，key为被映射到的维度
 
     # 计算样本的梯度
     for batch in tqdm(dataloader, total=len(dataloader)):
-        prepare_batch(batch)
+        prepare_batch(batch)  # 移到cuda上
         count += 1
 
-        # 这里会跳过已经做过了的
+        # 这里会跳过已经做过了的，用于训练中断了之后继续
         if count <= max_index:
             print("skipping count", count)
             continue
-
 
         # 计算梯度
         if gradient_type == "adam":
@@ -261,12 +288,11 @@ def collect_grads(dataloader,
                 print("Using SGD gradients")
             vectorized_grads = obtain_gradients(model, batch)
 
-
         # add the gradients to the full_grads
         full_grads.append(vectorized_grads)
         model.zero_grad()
 
-        # 数量有一定了之后就投影一次
+        # 数量有一定了之后就投影一次，然后清空full_grads
         if count % project_interval == 0:
             _project(full_grads, projected_grads)
             full_grads = []
@@ -317,8 +343,7 @@ def merge_and_normalize_info(output_dir: str, prefix="reps"):
 
     output_file = os.path.join(output_dir, f"all_orig.pt")
     torch.save(merged_data, output_file)
-    print(
-        f"Saving the normalized {prefix} (Shape: {merged_data.shape}) to {output_file}.")
+    print(f"Saving the normalized {prefix} (Shape: {merged_data.shape}) to {output_file}.")
 
 
 def merge_info(output_dir: str, prefix="reps"):
@@ -335,8 +360,7 @@ def merge_info(output_dir: str, prefix="reps"):
 
     output_file = os.path.join(output_dir, f"all_unormalized.pt")
     torch.save(merged_data, output_file)
-    print(
-        f"Saving the unnormalized {prefix} (Shape: {merged_data.shape}) to {output_file}.")
+    print(f"Saving the unnormalized {prefix} (Shape: {merged_data.shape}) to {output_file}.")
 
 
 def collect_reps(dataloader: torch.utils.data.DataLoader,
@@ -407,7 +431,7 @@ def collect_reps(dataloader: torch.utils.data.DataLoader,
 
 def get_loss(dataloader: torch.utils.data.DataLoader,
              model: torch.nn.Module,
-             output_dir: str,):
+             output_dir: str, ):
     """ Get the loss of the model on the given dataset. """
     total_loss = 0
     total_tokens = 0
@@ -421,6 +445,6 @@ def get_loss(dataloader: torch.utils.data.DataLoader,
 
     print(f"Loss: {total_loss / total_tokens}")
     result = {"num_tokens": total_tokens, "loss": (
-        total_loss / total_tokens)}
+            total_loss / total_tokens)}
     with open(os.path.join(output_dir, "loss.txt"), "w") as f:
         f.write(json.dumps(result, indent=4))

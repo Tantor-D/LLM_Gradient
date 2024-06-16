@@ -103,6 +103,14 @@ def main():
 
     if not isinstance(model, PeftModel) and model_args.lora:
         # 走了这里，可以从logging中看出
+        """
+        task_type: 指定任务的类型。TaskType.CAUSAL_LM 表示因果语言模型（Causal Language Modeling）。
+        inference_mode: 指示模型是否处于推理模式。False 表示模型处于训练模式，而不是推理模式。在训练模式下，模型会计算梯度并进行参数更新。
+        r: LoRA的秩（rank）参数。这是LoRA分解矩阵的秩，控制低秩近似的精度。较小的值会减少参数量，但可能影响模型性能
+        lora_alpha: LoRA的缩放因子（scaling factor）。这个参数用于缩放低秩分解的输出。它可以调整低秩适应的影响力，平衡模型的适应能力和稳定性。
+        lora_dropout: LoRA的dropout率。用于在训练过程中随机丢弃一些连接，以防止过拟合。设置为0则表示不使用dropout。
+        target_modules: 指定LoRA将应用到的目标模块。列出了模型中需要应用LoRA的具体层或模块名称。仅这些目标模块会被LoRA改动。
+        """
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             inference_mode=False,
@@ -189,7 +197,6 @@ def main():
     trainer.save_model()  # Saves the tokenizer too for easy upload
 
     metrics = train_result.metrics
-
     metrics["train_samples"] = len(train_dataset)
 
     trainer.log_metrics("train", metrics)
@@ -199,16 +206,17 @@ def main():
     # remove the full model in the end to save space, only adapter is needed
     # 本来底下这一段是需要执行的，我把它删掉了
     if isinstance(model, PeftModel):
-        # pytorch_model_path = os.path.join(
-        #     training_args.output_dir, "pytorch_model_fsdp.bin")
-        # os.remove(pytorch_model_path) if os.path.exists(
-        #     pytorch_model_path) else None
-        for root, dirs, files in os.walk(training_args.output_dir):
-            for file in files:
-                if file == "pytorch_model_fsdp.bin":
-                    file_path = os.path.join(root, file)
-                    print(f"Deleting: {file_path}")  # 打印将要删除的文件路径
-                    os.remove(file_path)  # 删除文件
+        pytorch_model_path = os.path.join(
+            training_args.output_dir, "pytorch_model_fsdp.bin")
+        os.remove(pytorch_model_path) if os.path.exists(
+            pytorch_model_path) else None
+        # 我自己写的类似功能的代码
+        # for root, dirs, files in os.walk(training_args.output_dir):
+        #     for file in files:
+        #         if file == "pytorch_model_fsdp.bin":
+        #             file_path = os.path.join(root, file)
+        #             print(f"Deleting: {file_path}")  # 打印将要删除的文件路径
+        #             os.remove(file_path)  # 删除文件
 
 
 if __name__ == "__main__":
