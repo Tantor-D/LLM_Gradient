@@ -14,7 +14,7 @@ from trak.projectors import BasicProjector, CudaProjector, ProjectionType
 from transformers import RobertaModel
 
 # 用于输出的一些设置
-has_print_size = False
+
 
 
 def prepare_batch(batch, device=torch.device("cuda:0")):
@@ -144,9 +144,18 @@ def obtain_gradients_with_adam(model, batch, avg, avg_sq):
     # 最后用到了torch.cat()函数，将所有参数的梯度拼接成一个张量。
     # torch.cat 意味着除了在拼接的维度上，所有的维度都是相同的
     # 也就是说，这里把一个数据的梯度统一的拼接到了一起，成了一个shape为(x,)的向量
+    # note 由于每一层的梯度的维度都一样，因此只需要知道每一层的梯度的维度，然后知道拼接的顺序，就可以知道每一层的梯度在vectorized_grads中的位置
+    # view 方法创建的张量与原始张量共享相同的数据存储。
     vectorized_grads = torch.cat([p.grad.view(-1) for n, p in model.named_parameters() if p.grad is not None])
 
-    # 由于每一层的梯度的维度都一样，因此只需要知道每一层的梯度的维度，然后知道拼接的顺序，就可以知道每一层的梯度在vectorized_grads中的位置
+
+    # 仅执行一次的代码段，打印训练数据相关的内容
+    if not hasattr(obtain_gradients_with_adam, "has_run"):
+        obtain_gradients_with_adam.has_run = True
+        for n, p in model.named_parameters():
+            if p.grad is not None:
+                print(f"参数名称：{n}，参数梯度的形状：{p.grad.shape}，view后的形状：{p.grad.view(-1).shape}")
+
 
     updated_avg = beta1 * avg + (1 - beta1) * vectorized_grads
     updated_avg_sq = beta2 * avg_sq + (1 - beta2) * vectorized_grads ** 2
