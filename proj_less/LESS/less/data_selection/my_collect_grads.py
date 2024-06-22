@@ -1,3 +1,5 @@
+# 用于对模型梯度的不同的层进行梯度的收集
+
 import json
 import os
 from hashlib import md5
@@ -41,8 +43,8 @@ def prepare_batch(batch, device=torch.device("cuda:0")):
 
 
 def get_max_saved_index(output_dir: str, prefix="reps") -> int:
-    """ 
-    Retrieve the highest index for which the data (either representation or gradients) has been stored. 
+    """
+    Retrieve the highest index for which the data (either representation or gradients) has been stored.
 
     Args:
         output_dir (str): The output directory.
@@ -105,11 +107,11 @@ def get_number_of_params(model):
     """
     首先，函数检查输入的 model 是否是 PeftModel 类型。
     如果是 PeftModel 类型，它会进一步检查模型中是否存在不应该需要梯度的参数。
-    
+
     检查非LoRA参数是否需要梯度：
     对于 PeftModel 类型的模型，函数会遍历所有参数的名称和对应的参数值，筛选出那些需要梯度且名称中不包含“lora”的参数。
     如果发现这样的参数存在，函数会通过断言（assert）引发一个错误，以确保在 PEFT 模型中，只有 LoRA 参数需要梯度。
-    
+
     计算需要梯度的参数数量：
     无论模型是否为 PeftModel 类型，函数都会计算并返回模型中所有需要梯度的参数的数量。
     它通过遍历 model.parameters() 并对需要梯度的参数的元素数量（numel()）求和来实现这一点。
@@ -165,14 +167,12 @@ def obtain_gradients_with_adam(model, batch, avg, avg_sq):
     # view 方法创建的张量与原始张量共享相同的数据存储。
     vectorized_grads = torch.cat([p.grad.view(-1) for n, p in model.named_parameters() if p.grad is not None])
 
-
     # 仅执行一次的代码段，打印训练数据相关的内容
     if not hasattr(obtain_gradients_with_adam, "has_run"):
         obtain_gradients_with_adam.has_run = True
         for n, p in model.named_parameters():
             if p.grad is not None:
                 print(f"参数名称：{n}，参数梯度的形状：{p.grad.shape}，view后的形状：{p.grad.view(-1).shape}")
-
 
     updated_avg = beta1 * avg + (1 - beta1) * vectorized_grads
     updated_avg_sq = beta2 * avg_sq + (1 - beta2) * vectorized_grads ** 2
@@ -209,7 +209,7 @@ def collect_grads(dataloader,
         output_dir (str): The directory where the gradients will be saved.
         proj_dim List[int]: The dimensions of the target projectors. Each dimension will be saved in a separate folder.
         gradient_type (str): The type of gradients to collect. [adam | sign | sgd]
-        adam_optimizer_state (dict): The optimizer state of adam optimizers. If None, the gradients will be collected without considering Adam optimization states. 
+        adam_optimizer_state (dict): The optimizer state of adam optimizers. If None, the gradients will be collected without considering Adam optimization states.
         max_samples (int, optional): The maximum number of samples to collect. Defaults to None.
     """
 
