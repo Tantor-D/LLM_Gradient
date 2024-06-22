@@ -356,7 +356,7 @@ def collect_grads_of_special_layers(dataloader,
     save_interval = 160  # save every 160 batches
 
     # 根据模型确定的一些超参数
-    if "llama-2-7b-hf" in model_name_or_path.lower():
+    if "llama2-7b" in model_name_or_path.lower() or "llama-2-7b" in model_name_or_path.lower():
         model_layers_num = 32
         lora_sublayer_per_layer = 8
         param_per_lora_sublayer = 524288

@@ -31,6 +31,9 @@ do
           mkdir -p $OUTPUT_PATH
         fi
 
+        # 定义日志文件
+        LOG_FILE="${OUTPUT_PATH}/processing.log"
+
         # 执行数据处理脚本
         echo "Processing $TRAINING_DATA_NAME at checkpoint $CKPT..."
         python3 -m less.data_selection.my_get_info \
@@ -39,9 +42,10 @@ do
         --model_path $MODEL_PATH \
         --output_path $OUTPUT_PATH \
         --gradient_projection_dimension $DIMS \
-        --gradient_type $GRADIENT_TYPE
+        --gradient_type $GRADIENT_TYPE  2>&1 | tee -a $LOG_FILE
 
         # 打印状态消息
         echo "Processed training data for CKPT=$CKPT with DATA NAME=$TRAINING_DATA_NAME"
+
     done
 done
