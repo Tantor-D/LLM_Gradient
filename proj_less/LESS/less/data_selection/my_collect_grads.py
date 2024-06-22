@@ -17,6 +17,7 @@ from transformers import RobertaModel
 
 # 用于输出的一些设置
 """
+第一个层是第0层
 参数名称：base_model.model.model.layers.30.self_attn.q_proj.lora_A.default.weight，参数梯度的形状：torch.Size([128, 4096])，view后的形状：torch.Size([524288])
 参数名称：base_model.model.model.layers.30.self_attn.q_proj.lora_B.default.weight，参数梯度的形状：torch.Size([4096, 128])，view后的形状：torch.Size([524288])
 参数名称：base_model.model.model.layers.30.self_attn.k_proj.lora_A.default.weight，参数梯度的形状：torch.Size([128, 4096])，view后的形状：torch.Size([524288])
@@ -192,170 +193,6 @@ def prepare_optimizer_state(model, optimizer_state, device):
     return avg, avg_sq
 
 
-def collect_grads(dataloader,
-                  model,
-                  output_dir,
-                  proj_dim: List[int] = [8192],
-                  adam_optimizer_state: Optional[dict] = None,
-                  gradient_type: str = "adam",
-                  max_samples: Optional[int] = None):
-    """
-    Collects gradients from the model during evaluation and saves them to disk.
-    这个函数只会处理一个checkpoint时的梯度，所以在上层需要使用脚本多次调用这个函数来获取多个梯度。
-
-    Args:
-        dataloader (torch.utils.data.DataLoader): The data loader for evaluation dataset.
-        model (torch.nn.Module): The model from which gradients will be collected.
-        output_dir (str): The directory where the gradients will be saved.
-        proj_dim List[int]: The dimensions of the target projectors. Each dimension will be saved in a separate folder.
-        gradient_type (str): The type of gradients to collect. [adam | sign | sgd]
-        adam_optimizer_state (dict): The optimizer state of adam optimizers. If None, the gradients will be collected without considering Adam optimization states.
-        max_samples (int, optional): The maximum number of samples to collect. Defaults to None.
-    """
-
-    model_id = 0  # model_id is used to draft the random seed for the projectors
-    block_size = 128  # fixed block size for the projectors
-    projector_batch_size = 16  # batch size for the projectors
-    torch.random.manual_seed(0)  # set the random seed for torch
-
-    project_interval = 16  # project every 16 batches
-    save_interval = 160  # save every 160 batches
-
-    def _project(current_full_grads, projected_grads):
-        # 将 current_full_grads 列表中的所有梯度堆叠成一个张量。
-        current_full_grads = torch.stack(current_full_grads).to(torch.float16)
-        for i, projector in enumerate(projectors):
-            # 遍历 projectors 列表中的每一个投影器 projector，将 current_full_grads 投影到 projector 的维度 proj_dim[i] 上。
-            # note 设置映射的维度为1时，不进行映射，直接保存
-            if proj_dim[i] != 1:
-                current_projected_grads = projector.project(current_full_grads, model_id=model_id)
-            else:
-                current_projected_grads = current_full_grads
-            projected_grads[proj_dim[i]].append(current_projected_grads.cpu())
-
-    def _save(projected_grads, output_dirs):
-        # 将 projected_grads 中的梯度保存到 output_dirs 中。
-        for dim in proj_dim:
-            # 没有数据的话，就不处理
-            if len(projected_grads[dim]) == 0:
-                continue
-
-            # 因为 projected_grads[dim] 是一个列表，所以需要将其中的所有张量拼接成一个张量。且不会新增一个维度（stack会）
-            projected_grads[dim] = torch.cat(projected_grads[dim])
-
-            output_dir = output_dirs[dim]
-            outfile = os.path.join(output_dir, f"grads-{count}.pt")
-
-            # 对梯度进行保存，注意保存完后要从 projected_grads里删掉
-            torch.save(projected_grads[dim], outfile)
-            print(f"Saving {outfile}, {projected_grads[dim].shape}", flush=True)
-            projected_grads[dim] = []
-
-    device = next(model.parameters()).device
-    dtype = next(model.parameters()).dtype
-
-    print("dtype: " + str(dtype))
-
-    # prepare optimization states
-    if gradient_type == "adam":
-        assert adam_optimizer_state is not None
-        # first and second moment estimates
-        # 这个函数只会处理一个checkpoint时的梯度，所以在上层需要使用脚本多次调用这个函数来获取多个梯度
-        # 由于是一个checkpoint，因此直接加载就好，后续也不用变，整个checkpoint计算时都是一样的
-        m, v = prepare_optimizer_state(model, adam_optimizer_state, device)
-
-    # 这个projector是一个构造函数，具体是用于确定是用trak'库的CudaProjector还是BasicProjector
-    projector = get_trak_projector(device)
-    number_of_params = get_number_of_params(model)
-
-    # initialize a project for each target projector dimension
-    projectors = []
-    for dim in proj_dim:
-        proj = projector(grad_dim=number_of_params,
-                         proj_dim=dim,
-                         seed=0,
-                         proj_type=ProjectionType.rademacher,
-                         device=device,
-                         dtype=dtype,
-                         block_size=block_size,
-                         max_batch_size=projector_batch_size)
-        projectors.append(proj)
-
-    count = 0
-
-    # set up a output directory for each dimension
-    output_dirs = {}
-    for dim in proj_dim:
-        output_dir_per_dim = os.path.join(output_dir, f"dim{dim}")
-        output_dirs[dim] = output_dir_per_dim
-        os.makedirs(output_dir_per_dim, exist_ok=True)
-
-    # max index for each dimension，用于训练中断后跳过已经做过的
-    max_index = min(get_max_saved_index(output_dirs[dim], "grads") for dim in proj_dim)
-
-    # projected_gradients
-    full_grads = []  # full gradients
-    projected_grads = {dim: [] for dim in proj_dim}  # projected gradients，是一个字典，key为被映射到的维度
-
-    # 计算样本的梯度
-    for batch in tqdm(dataloader, total=len(dataloader)):
-        prepare_batch(batch)  # 移到cuda上
-        count += 1
-
-        # 这里会跳过已经做过了的，用于训练中断了之后继续
-        if count <= max_index:
-            print("skipping count", count)
-            continue
-
-        # 计算梯度
-        if gradient_type == "adam":
-            if count == 1:
-                print("Using Adam gradients")
-            vectorized_grads = obtain_gradients_with_adam(model, batch, m, v)
-        elif gradient_type == "sign":
-            if count == 1:
-                print("Using Sign gradients")
-            vectorized_grads = obtain_sign_gradients(model, batch)
-        else:
-            if count == 1:
-                print("Using SGD gradients")
-            vectorized_grads = obtain_gradients(model, batch)
-
-        # add the gradients to the full_grads
-        full_grads.append(vectorized_grads)
-        model.zero_grad()
-
-        # 数量有一定了之后就投影一次，然后清空full_grads
-        if count % project_interval == 0:
-            _project(full_grads, projected_grads)
-            full_grads = []
-
-        # 数量有一定了之后就存一次
-        if count % save_interval == 0:
-            _save(projected_grads, output_dirs)
-
-        # 这里可以规定需要的sample数量，训练集那里应该设置为空，测试集可以设置一个上限
-        if max_samples is not None and count == max_samples:
-            break
-
-    # 没到设定数量的剩余的没映射的样本
-    if len(full_grads) > 0:
-        _project(full_grads, projected_grads)
-        full_grads = []
-
-    # 把所有维度计算出来的信息都保存
-    for dim in proj_dim:
-        _save(projected_grads, output_dirs)
-
-    torch.cuda.empty_cache()
-    for dim in proj_dim:
-        output_dir = output_dirs[dim]
-        merge_and_normalize_info(output_dir, prefix="grads")
-        merge_info(output_dir, prefix="grads")
-
-    print("collect_grads() finished")
-
-
 def merge_and_normalize_info(output_dir: str, prefix="reps"):
     """ Merge and normalize the representations and gradients into a single file. """
     # 筛选仅仅处理prefix开头的数据，因为grads和loss之类的数据都是存在一起的。
@@ -363,7 +200,7 @@ def merge_and_normalize_info(output_dir: str, prefix="reps"):
     info = [file for file in info if file.startswith(prefix)]
 
     # Sort the files in ascending order
-    # 排序依据是将文件名按照“-”分割后取第二部分转换为整数
+    # 排序依据是将文件名按照“-”分割后取第二部分转换为整数，然后按照整数进行排序。 本来文件命名就是grad-160.pt这种格式
     info.sort(key=lambda x: int(x.split(".")[0].split("-")[1]))
 
     # 合并和标准化数据
@@ -383,6 +220,7 @@ def merge_info(output_dir: str, prefix="reps"):
     """ Merge the representations and gradients into a single file without normalization. """
     info = os.listdir(output_dir)
     info = [file for file in info if file.startswith(prefix)]
+
     # Sort the files in ascending order
     info.sort(key=lambda x: int(x.split(".")[0].split("-")[1]))
     merged_data = []
@@ -481,3 +319,198 @@ def get_loss(dataloader: torch.utils.data.DataLoader,
             total_loss / total_tokens)}
     with open(os.path.join(output_dir, "loss.txt"), "w") as f:
         f.write(json.dumps(result, indent=4))
+
+
+def collect_grads_of_special_layers(dataloader,
+                                    model_name_or_path: str,
+                                    model,
+                                    output_dir,
+                                    target_dim: int,
+                                    adam_optimizer_state: Optional[dict] = None,
+                                    gradient_type: str = "adam",
+                                    max_samples: Optional[int] = None):
+    """
+    Collects gradients from the model during evaluation and saves them to disk.
+    这个函数只会处理一个checkpoint时的梯度，所以在上层需要使用脚本多次调用这个函数来获取多个梯度。
+
+    Args:
+        dataloader (torch.utils.data.DataLoader): The data loader for evaluation dataset.
+        model (torch.nn.Module): The model from which gradients will be collected.
+        output_dir (str): The directory where the gradients will be saved.
+        proj_dim List[int]: The dimensions of the target projectors. Each dimension will be saved in a separate folder.
+        gradient_type (str): The type of gradients to collect. [adam | sign | sgd]
+        adam_optimizer_state (dict): The optimizer state of adam optimizers. If None, the gradients will be collected without considering Adam optimization states.
+        max_samples (int, optional): The maximum number of samples to collect. Defaults to None.
+    """
+
+    # todo 时候要改成可以由上层指定，确定如何指定
+    proj_from_layer_list = [i for i in range(0, 32)]  # 0-31
+    proj_end_layer_list = [i for i in range(0, 32)]  # 0-31 todo 这一部分之后要可以由上层指定
+
+    model_id = 0  # model_id is used to draft the random seed for the projectors
+    block_size = 128  # fixed block size for the projectors
+    projector_batch_size = 16  # batch size for the projectors
+    torch.random.manual_seed(0)  # set the random seed for torch
+
+    project_interval = 16  # project every 16 batches
+    save_interval = 160  # save every 160 batches
+
+    # 根据模型确定的一些超参数
+    if "llama-2-7b-hf" in model_name_or_path.lower():
+        model_layers_num = 32
+        lora_sublayer_per_layer = 8
+        param_per_lora_sublayer = 524288
+        param_per_layer = lora_sublayer_per_layer * param_per_lora_sublayer
+    else:
+        raise ValueError("Unknown model")
+
+    # 计算每次projector需要处理的模型层数
+    proj_layer_num_list = [proj_end_layer_list[i] - proj_from_layer_list[i] + 1 for i in
+                           range(len(proj_from_layer_list))]
+
+    def _project(current_full_grads, projected_grads):
+        # 将 current_full_grads 列表中的所有梯度堆叠成一个张量。
+        current_full_grads = torch.stack(current_full_grads).to(torch.float16)
+
+        # 首先根据映射的层的情况进行拆分
+        to_proj_grads = []
+        for i in range(len(proj_from_layer_list)):
+            # 拆分梯度
+            from_idx = proj_from_layer_list[i] * param_per_layer
+            end_idx = proj_end_layer_list[i] * param_per_layer + 1
+            to_proj_grads.append(current_full_grads[:, from_idx:end_idx])
+
+        # 拆分后进行投影
+        for i in range(len(proj_from_layer_list)):
+            current_layers_grads = to_proj_grads[i]
+            current_layers_num = proj_layer_num_list[i]
+            projed_grads = projectors[current_layers_num].project(current_layers_grads, model_id=model_id)
+            projected_grads[proj_from_layer_list[i]].append(projed_grads.cpu())
+
+    def _save(projected_grads, output_dirs):
+        # 将 projected_grads 中的梯度保存到 output_dirs 中。
+        for i in range(len(proj_from_layer_list)):
+            from_layer = proj_from_layer_list[i]
+
+            # 没有数据的话，就不处理
+            if len(projected_grads[from_layer]) == 0:
+                continue
+
+            # 因为 projected_grads[a] 是一个列表，所以需要将其中的所有张量拼接成一个张量。且不会新增一个维度（stack会）
+            projected_grads[from_layer] = torch.cat(projected_grads[from_layer])
+
+            output_dir = output_dirs[from_layer]
+            outfile = os.path.join(output_dir, f"grads-{count}.pt")
+
+            # 对梯度进行保存，注意保存完后要从 projected_grads里删掉
+            torch.save(projected_grads[from_layer], outfile)
+            print(f"Saving {outfile}, {projected_grads[from_layer].shape}", flush=True)
+            projected_grads[from_layer] = []
+
+
+    device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
+    print("dtype: " + str(dtype))
+
+    # prepare optimization states
+    if gradient_type == "adam":
+        assert adam_optimizer_state is not None
+        # first and second moment estimates
+        # 这个函数只会处理一个checkpoint时的梯度，所以在上层需要使用脚本多次调用这个函数来获取多个梯度
+        # 由于是一个checkpoint，因此直接加载就好，后续也不用变，整个checkpoint计算时都是一样的
+        m, v = prepare_optimizer_state(model, adam_optimizer_state, device)
+
+    # 这个projector是一个构造函数，具体是用于确定是用trak'库的CudaProjector还是BasicProjector
+    projector = get_trak_projector(device)
+
+    # 计算模型的参数数量，进行assert检查
+    number_of_params = get_number_of_params(model)
+    assert number_of_params == param_per_layer * model_layers_num
+
+    # initialize a project for each target projector dimension
+    projectors = {}
+    for proj_layer_num in proj_layer_num_list:
+        if proj_layer_num not in projectors:
+            proj = projector(grad_dim=proj_layer_num,
+                             proj_dim=target_dim,
+                             seed=0,
+                             proj_type=ProjectionType.rademacher,
+                             device=device,
+                             dtype=dtype,
+                             block_size=block_size,
+                             max_batch_size=projector_batch_size)
+            projectors[proj_layer_num] = proj
+
+    count = 0
+
+    # set up a output directory for each dimension
+    output_dirs = {}
+    for i in range(len(proj_from_layer_list)):
+        output_dir_start_layer = os.path.join(output_dir,
+                                              f"layer_from_{proj_from_layer_list[i]}_to_{proj_end_layer_list[i]}")
+        output_dirs[proj_from_layer_list[i]] = output_dir_start_layer
+        os.makedirs(output_dir_start_layer, exist_ok=True)
+
+    # max index for each dimension，用于训练中断后跳过已经做过的
+    max_index = min(get_max_saved_index(output_dirs[from_index], "grads") for from_index in proj_from_layer_list)
+
+    # projected_gradients
+    # projected gradients，是一个字典，key为开始的layer层的编号
+    full_grads = []  # full gradients
+    projected_grads = {from_index: [] for from_index in proj_from_layer_list}
+
+    # 计算样本的梯度
+    for batch in tqdm(dataloader, total=len(dataloader)):
+        prepare_batch(batch)  # 移到cuda上
+        count += 1
+
+        # 这里会跳过已经做过了的，用于训练中断了之后继续
+        if count <= max_index:
+            print("skipping count", count)
+            continue
+
+        # 计算梯度
+        if gradient_type == "adam":
+            if count == 1:
+                print("Using Adam gradients")
+            vectorized_grads = obtain_gradients_with_adam(model, batch, m, v)
+        elif gradient_type == "sign":
+            if count == 1:
+                print("Using Sign gradients")
+            vectorized_grads = obtain_sign_gradients(model, batch)
+        else:
+            if count == 1:
+                print("Using SGD gradients")
+            vectorized_grads = obtain_gradients(model, batch)
+
+        # add the gradients to the full_grads
+        full_grads.append(vectorized_grads)
+        model.zero_grad()
+
+        # 数量有一定了之后就投影一次，然后清空full_grads
+        if count % project_interval == 0:
+            _project(full_grads, projected_grads)
+            full_grads = []
+
+        # 数量有一定了之后就存一次
+        if count % save_interval == 0:
+            _save(projected_grads, output_dirs)
+
+        # 这里可以规定需要的sample数量，训练集那里应该设置为空，测试集可以设置一个上限
+        if max_samples is not None and count == max_samples:
+            break
+
+    # 没到设定数量的剩余的没投影的样本要投影了。同时把可能剩下的没保存的映射后的梯度都保存
+    if len(full_grads) > 0:
+        _project(full_grads, projected_grads)
+        full_grads = []
+    _save(projected_grads, output_dirs)
+
+    # 合并最后获取的梯度，合为一个文件
+    torch.cuda.empty_cache()
+    for from_layer in proj_from_layer_list:
+        output_dir = output_dirs[from_layer]
+        merge_and_normalize_info(output_dir, prefix="grads")
+        merge_info(output_dir, prefix="grads")
+
+    print("collect_grads() finished")

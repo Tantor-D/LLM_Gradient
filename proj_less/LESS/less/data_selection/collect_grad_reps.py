@@ -165,14 +165,12 @@ def obtain_gradients_with_adam(model, batch, avg, avg_sq):
     # view 方法创建的张量与原始张量共享相同的数据存储。
     vectorized_grads = torch.cat([p.grad.view(-1) for n, p in model.named_parameters() if p.grad is not None])
 
-
     # 仅执行一次的代码段，打印训练数据相关的内容
     if not hasattr(obtain_gradients_with_adam, "has_run"):
         obtain_gradients_with_adam.has_run = True
         for n, p in model.named_parameters():
             if p.grad is not None:
                 print(f"参数名称：{n}，参数梯度的形状：{p.grad.shape}，view后的形状：{p.grad.view(-1).shape}")
-
 
     updated_avg = beta1 * avg + (1 - beta1) * vectorized_grads
     updated_avg_sq = beta2 * avg_sq + (1 - beta2) * vectorized_grads ** 2
