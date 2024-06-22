@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 # import ipdb;  ipdb.set_trace()
 
 def main():
+    
+    import torch
+
+    # 检查是否安装了CUDA支持的PyTorch
+    if torch.cuda.is_available():
+        cuda_version = torch.version.cuda
+        print(f"CUDA version: {cuda_version}")
+    else:
+        print("CUDA is not available")
+    
     print(os.environ.get('CUDA_VISIBLE_DEVICES'))
     # import ipdb; ipdb.set_trace()
     parser = HfArgumentParser(
