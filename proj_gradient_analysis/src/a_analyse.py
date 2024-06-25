@@ -133,7 +133,7 @@ def new_matching(config):
                         # 加载测试集计算出来的梯度，读取数据然后仅提取需要的部分
                         validation_path = config["validation_gradient_path"].format(target_task_name, ckpt)
                         validation_info = torch.load(validation_path)
-                        end_index = min(offset + 10, validation_info.shape[0])
+                        end_index = min(offset + sample_size, validation_info.shape[0])
                         validation_info = validation_info[offset:end_index]
 
                         if not torch.is_tensor(validation_info):
