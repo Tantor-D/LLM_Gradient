@@ -183,7 +183,6 @@ def obtain_gradients_with_adam(model, batch, avg, avg_sq):
 
 
 def prepare_optimizer_state(model, optimizer_state, device):
-    # import ipdb; ipdb.set_trace()
     names = [n for n, p in model.named_parameters() if p.requires_grad]
     avg = torch.cat([optimizer_state[n]["exp_avg"].view(-1) for n in names])
     avg_sq = torch.cat([optimizer_state[n]["exp_avg_sq"].view(-1)
@@ -377,7 +376,7 @@ def collect_grads_of_special_layers(dataloader,
         for i in range(len(proj_from_layer_list)):
             # 拆分梯度
             from_idx = proj_from_layer_list[i] * param_per_layer
-            end_idx = proj_end_layer_list[i] * param_per_layer + 1
+            end_idx = (proj_end_layer_list[i]+1) * param_per_layer
             to_proj_grads.append(current_full_grads[:, from_idx:end_idx])
 
         # 拆分后进行投影
@@ -431,7 +430,7 @@ def collect_grads_of_special_layers(dataloader,
     projectors = {}
     for proj_layer_num in proj_layer_num_list:
         if proj_layer_num not in projectors:
-            proj = projector(grad_dim=proj_layer_num,
+            proj = projector(grad_dim=proj_layer_num * param_per_layer,
                              proj_dim=target_dim,
                              seed=0,
                              proj_type=ProjectionType.rademacher,
