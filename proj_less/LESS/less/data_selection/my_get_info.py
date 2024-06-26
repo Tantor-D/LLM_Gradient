@@ -176,7 +176,8 @@ collect_grads_of_special_layers(
     model_name_or_path=args.model_path,
     model=model,
     output_dir=args.output_path,
-    target_dim=4096,     # todo 暂时没有让上层指定
+    # target_dim=1024,     # todo 暂时没有让上层指定
+    target_dim=2048,     # todo 暂时没有让上层指定
     adam_optimizer_state=adam_optimizer_state,
     gradient_type=args.gradient_type,
     max_samples=args.max_samples)
