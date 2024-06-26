@@ -6,20 +6,17 @@ import json
 import os
 import torch
 
-# argparser.add_argument('--output_path', type=str, default="../selected_data", help='The path to the output')
-
 share_config = {
     "DIM": 8192,
     "SEED": 3,
     "train_file_names": ["code_high", "code_medium", "code_low"],
-    "target_task_names": [# "LeeTCode_code_high", "LeeTCode_code_medium", "LeeTCode_code_low",
-                          "olympic_OE_TO_maths_en_COMP", "olympic_OE_TO_physics_en_COMP",
-                          "olympic_TP_TO_maths_en_COMP", "olympic_TP_TO_physics_en_COMP",
-                          "GSM", 
-                        #   "MultiArith", "SVAMP"
-                          #, "ASDiv"
-                          ],
-    
+    "target_task_names": [
+        "LeeTCode_code_high", "LeeTCode_code_medium", "LeeTCode_code_low",
+        "olympic_OE_TO_maths_en_COMP", "olympic_OE_TO_physics_en_COMP",
+        "olympic_TP_TO_maths_en_COMP", "olympic_TP_TO_physics_en_COMP",
+        "GSM", "MultiArith", "SVAMP", "ASDiv"
+    ],
+
     # only select data
     "percentage": 0.05,
     "max_samples": None,
@@ -42,21 +39,22 @@ matching_configs = [
         "base_path": "/home/zhiyuan/dsw/project/LLM_Gradient/proj_less/",
         "gradient_path": "grads/llama2-7b-p0.05-lora-seed3/{}-ckpt{}-adam/layer_from_{}_to_{}/all_orig.pt",
         "validation_gradient_path": "grads/llama2-7b-p0.05-lora-seed3/{}-ckpt{}-sgd/layer_from_{}_to_{}/all_orig.pt",
-        
-        # 输出的地址
+
+        # 输出的地址，最后保存的时候为 ori_output_path/ sample_size/ model_name/ xxx.json
         "ori_output_path": "/home/zhiyuan/dsw/project/LLM_Gradient/proj_less/score",
-        
+
         # layer的设置，这里没有加上
     }
 ]
 
-N_SUBTASKS = {"mmlu": 57, "bbh": 27, "tydiqa": 9, "AQuA": 1, "GSM": 1, 
-              "ASDiv": 1, "ASDiv_Grade_1": 1,"ASDiv_Grade_2": 1, "ASDiv_Grade_3": 1, "ASDiv_Grade_4": 1, "ASDiv_Grade_5": 1, "ASDiv_Grade_6": 1,
-              "GSM": 1,  "MultiArith": 1, "SVAMP": 1, 
-              "olympic_OE_TO_maths_en_COMP": 1, "olympic_OE_TO_physics_en_COMP": 1, 
+N_SUBTASKS = {"mmlu": 57, "bbh": 27, "tydiqa": 9, "AQuA": 1, "GSM": 1,
+              "ASDiv": 1, "ASDiv_Grade_1": 1, "ASDiv_Grade_2": 1, "ASDiv_Grade_3": 1, "ASDiv_Grade_4": 1,
+              "ASDiv_Grade_5": 1, "ASDiv_Grade_6": 1,
+              "GSM": 1, "MultiArith": 1, "SVAMP": 1,
+              "olympic_OE_TO_maths_en_COMP": 1, "olympic_OE_TO_physics_en_COMP": 1,
               "olympic_TP_TO_maths_en_COMP": 1, "olympic_TP_TO_physics_en_COMP": 1,
-              "LeeTCode_submission": 1, "LeeTCode": 1, 
-              "LeeTCode_code_high": 1, "LeeTCode_code_medium": 1, "LeeTCode_code_low": 1,}
+              "LeeTCode_submission": 1, "LeeTCode": 1,
+              "LeeTCode_code_high": 1, "LeeTCode_code_medium": 1, "LeeTCode_code_low": 1, }
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -92,7 +90,8 @@ def new_matching(config):
             for sample_size in config["sample_size"]:
                 print("--------------------------------------------")
                 mmodel_name = config["MODEL_NAME"]
-                print(f"eval dataset: {target_task_name}, sample_size: {sample_size}, model: {mmodel_name}, layer: {current_layer_str}")
+                print(
+                    f"eval dataset: {target_task_name}, sample_size: {sample_size}, model: {mmodel_name}, layer: {current_layer_str}")
 
                 dataset_count = {"top5": {}, "top1": {}, }
                 data_id_count = {"top5": {}, "top1": {}, }
