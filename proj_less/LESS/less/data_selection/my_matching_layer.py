@@ -27,13 +27,13 @@ share_config = {
 
 matching_configs = [
     {
-        # llama2-7b
+        # llama2-7b， 870数据
         "ckpts": [4, 8, 12, 16],
         "MODEL_NAME": "llama2-7b",
-        "checkpoint_weights": [1.8e-05,
-                               1.26666666e-05,
-                               7.33333333e-06,
-                               2e-06],
+        "checkpoint_weights": [1.8000000000000004e-05,
+                               1.2666666666666665e-05,
+                               7.333333333333333e-06,
+                               2.0000000000000003e-06],
 
         # 之前算出来的梯度的位置，训练集+测试集，需要读，记得改model_name
         "base_path": "/home/zhiyuan/dsw/project/LLM_Gradient/proj_less/",
@@ -103,7 +103,7 @@ def new_matching(config):
                                                               from_layer_list[layer_idx],
                                                               end_layer_list[layer_idx])).shape[0]
 
-                # note 对每一个offset进行全流程的处理，每个offset是一个sample_size的数据，每个offset内的数据对应于之前那人写的一个数据集
+                # note 对每一个offset进行全流程的处理，每个offset是一个sample_size的数据，每个offset内的数据对应于之前的一个数据集
                 for offset in range(0, validation_data_num, sample_size):
                     cur_offset_score = {}
                     for train_file_name in config["train_file_names"]:  # 训练集的名
@@ -211,12 +211,12 @@ def new_select(config, score_dict, dataset_count, data_id_count):
     # all_scores按分数降序。torch.sort 返回两个张量：一个是排序后的分数 (sorted_scores)，另一个是排序后分数对应的原始索引 (sorted_index)。
     sorted_scores, sorted_index = torch.sort(all_scores, dim=0, descending=True)
 
-    data_from = data_from[sorted_index]  # 数据集
+    data_from = data_from[sorted_index]  # 数据集的编号
     sorted_index = file_specific_index[sorted_index]  # 这时候sorted_index[i]就变成了排序后的第[i]项在自己所属的数据集内的index
 
     ccount = 0
-    for score, index, data_from_info in zip(sorted_scores, sorted_index, data_from):
-        cur_dataset_name = config["train_file_names"][data_from_info.item()]
+    for score, index, from_dataset_index in zip(sorted_scores, sorted_index, data_from):
+        cur_dataset_name = config["train_file_names"][from_dataset_index.item()]
         cur_data_id = cur_dataset_name + "_" + str(index.item())  # 刚好碰巧了行号+数据集name就是id
 
         # 保存数据
@@ -227,8 +227,6 @@ def new_select(config, score_dict, dataset_count, data_id_count):
             dataset_count["top1"][cur_dataset_name] = dataset_count["top1"].get(cur_dataset_name, 0) + 1
             data_id_count["top1"][cur_data_id] = data_id_count["top1"].get(cur_data_id, 0) + 1
         ccount += 1
-        # xxx = config["train_file_names"]
-        # file.write(f"{xxx[data_from_info.item()]}, {index.item()}, {round(score.item(), 6)}\n")
 
 
 if __name__ == "__main__":

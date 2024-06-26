@@ -5,23 +5,22 @@ import json
 import os
 import torch
 
-# argparser.add_argument('--output_path', type=str, default="../selected_data", help='The path to the output')
-
 share_config = {
     "DIM": 8192,
     "SEED": 3,
     "train_file_names": ["code_high", "code_medium", "code_low"],
-    
-    # "target_task_names": ["AQuA", "ASDiv", "ASDiv_Grade_1", "ASDiv_Grade_2", "ASDiv_Grade_3", "ASDiv_Grade_4",
-    #                       "ASDiv_Grade_5", "ASDiv_Grade_6", "GSM", "LeeTCode_submission", "MultiArith", "SVAMP",
-    #                       "olympic_OE_TO_maths_en_COMP", "olympic_OE_TO_physics_en_COMP",
-    #                       "olympic_TP_TO_maths_en_COMP", "olympic_TP_TO_physics_en_COMP"],
-    "target_task_names": ["LeeTCode_code_high"],
+    "target_task_names": [
+        "LeeTCode_code_high", "LeeTCode_code_medium", "LeeTCode_code_low",
+        "olympic_OE_TO_maths_en_COMP", "olympic_OE_TO_physics_en_COMP",
+        "olympic_TP_TO_maths_en_COMP", "olympic_TP_TO_physics_en_COMP",
+        "GSM", "MultiArith", "SVAMP", "ASDiv"
+    ],
+
     # only select data
     "percentage": 0.05,
     "max_samples": None,
 
-    # 其他
+    # sample size
     "sample_size": [5, 10]
 }
 
@@ -34,7 +33,7 @@ matching_configs = [
                                1.2666666666666665e-05,
                                7.333333333333333e-06,
                                2.0000000000000003e-06],
-    
+
         # 之前算出来的梯度的位置，训练集+测试集，需要读，记得改model_name
         "base_path": "/home/zhiyuan/dsw/project/LLM_Gradient/proj_less/",
         "gradient_path": "grads/llama2-7b-p0.05-lora-seed3/{}-ckpt{}-adam/dim8192/all_orig.pt",
@@ -76,13 +75,14 @@ matching_configs = [
     # }
 ]
 
-N_SUBTASKS = {"mmlu": 57, "bbh": 27, "tydiqa": 9, "AQuA": 1, "GSM": 1, 
-              "ASDiv": 1, "ASDiv_Grade_1": 1,"ASDiv_Grade_2": 1, "ASDiv_Grade_3": 1, "ASDiv_Grade_4": 1, "ASDiv_Grade_5": 1, "ASDiv_Grade_6": 1,
-              "GSM": 1,  "MultiArith": 1, "SVAMP": 1, 
-              "olympic_OE_TO_maths_en_COMP": 1, "olympic_OE_TO_physics_en_COMP": 1, 
+N_SUBTASKS = {"mmlu": 57, "bbh": 27, "tydiqa": 9, "AQuA": 1, "GSM": 1,
+              "ASDiv": 1, "ASDiv_Grade_1": 1, "ASDiv_Grade_2": 1, "ASDiv_Grade_3": 1, "ASDiv_Grade_4": 1,
+              "ASDiv_Grade_5": 1, "ASDiv_Grade_6": 1,
+              "GSM": 1, "MultiArith": 1, "SVAMP": 1,
+              "olympic_OE_TO_maths_en_COMP": 1, "olympic_OE_TO_physics_en_COMP": 1,
               "olympic_TP_TO_maths_en_COMP": 1, "olympic_TP_TO_physics_en_COMP": 1,
-              "LeeTCode_submission": 1, "LeeTCode": 1, 
-              "LeeTCode_code_high": 1, "LeeTCode_code_medium": 1, "LeeTCode_code_low": 1,}
+              "LeeTCode_submission": 1, "LeeTCode": 1,
+              "LeeTCode_code_high": 1, "LeeTCode_code_medium": 1, "LeeTCode_code_low": 1, }
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -107,21 +107,14 @@ def new_matching(config):
         config["checkpoint_weights"] = [i / s for i in config["checkpoint_weights"]]  # 可能会出问题，因为梯度其实差的挺多的
 
     # calculate the influence score for each validation task
-    for target_task_name in config["target_task_names"]:  # 测试集的名，实际是上列表
-        # 每个测试集的统计结果，每个测试集都要与3个训练集算完后再做下一步
-        # 开始处理，每个step加载的数量不一致
+    # 测试集的名，实际是上列表
+    for target_task_name in config["target_task_names"]:
         for sample_size in config["sample_size"]:
             print("--------------------------------------------")
             mmodel_name = config["MODEL_NAME"]
             print(f"测试集为{target_task_name}, sample_size为 {sample_size}, model为 {mmodel_name}")
-            dataset_count = {
-                "top5": {},
-                "top1": {},
-            }
-            data_id_count = {
-                "top5": {},
-                "top1": {},
-            }
+            dataset_count = {"top5": {}, "top1": {}, }
+            data_id_count = {"top5": {}, "top1": {}, }
             config["output_path"] = config["ori_output_path"] + f"/{sample_size}"
 
             # note 现在才是开始正式的进行一个单位的处理流程，即明确的测试集，输出位置，sample_size
@@ -132,7 +125,6 @@ def new_matching(config):
             for offset in range(0, validation_data_num, sample_size):
                 cur_offset_score = {}
                 for train_file_name in config["train_file_names"]:  # 训练集的名
-                    # print(f"train为 {train_file_name}, eval为 {target_task_name}")
                     influence_score = 0
 
                     # 每个checkpoint的分数
@@ -145,7 +137,9 @@ def new_matching(config):
 
                         if not torch.is_tensor(validation_info):
                             validation_info = torch.tensor(validation_info)
-                        validation_info = validation_info.to(device).float()  # shape为 [254, 8192]，第一维的大小对应了eval集合的数据条数
+
+                        # shape为 [254, 8192]，第一维的大小对应了eval集合的数据条数
+                        validation_info = validation_info.to(device).float()
 
                         # 加载训练集计算出来的梯度
                         gradient_path = config["gradient_path"].format(train_file_name, ckpt)
@@ -155,7 +149,6 @@ def new_matching(config):
                         training_info = training_info.to(device).float()  # shape为 [874, 8192]，第一维的大小对应了train集合的数据条数
 
                         # 计算出当前checkpoint 的分数，即相关性*学习率，大小为 [n_train, n_eval]
-                        # import ipdb; ipdb.set_trace()
                         influence_score += config["checkpoint_weights"][i] * \
                                            calculate_influence_score(training_info=training_info,
                                                                      validation_info=validation_info)
@@ -215,7 +208,7 @@ def new_select(config, target_task, score_dict, base_save_score_path, dataset_co
     total_samples = sum(num_samples)
 
     # 其实现在已经不用了
-    if config["percentage"] is not None:  # percentage=0.05
+    if config["percentage"] is not None:
         config["max_samples"] = int(config["percentage"] * total_samples)
 
     # sort the scores and output the corresponding data index
@@ -230,7 +223,7 @@ def new_select(config, target_task, score_dict, base_save_score_path, dataset_co
     # all_scores按分数降序。torch.sort 返回两个张量：一个是排序后的分数 (sorted_scores)，另一个是排序后分数对应的原始索引 (sorted_index)。
     sorted_scores, sorted_index = torch.sort(all_scores, dim=0, descending=True)
 
-    data_from = data_from[sorted_index]  # 数据集
+    data_from = data_from[sorted_index]  # 数据集的编号
     sorted_index = file_specific_index[sorted_index]  # 这时候sorted_index[i]就变成了排序后的第[i]项在自己所属的数据集内的index
 
     ccount = 0
@@ -246,8 +239,6 @@ def new_select(config, target_task, score_dict, base_save_score_path, dataset_co
             dataset_count["top1"][cur_dataset_name] = dataset_count["top1"].get(cur_dataset_name, 0) + 1
             data_id_count["top1"][cur_data_id] = data_id_count["top1"].get(cur_data_id, 0) + 1
         ccount += 1
-        # xxx = config["train_file_names"]
-        # file.write(f"{xxx[data_from_info.item()]}, {index.item()}, {round(score.item(), 6)}\n")
 
 
 if __name__ == "__main__":
