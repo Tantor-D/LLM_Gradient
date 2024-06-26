@@ -12,60 +12,51 @@ share_config = {
     "DIM": 8192,
     "SEED": 3,
     "train_file_names": ["code_high", "code_medium", "code_low"],
-    "target_task_names": ["AQuA", "ASDiv", "ASDiv_Grade_1", "ASDiv_Grade_2", "ASDiv_Grade_3", "ASDiv_Grade_4",
-                          "ASDiv_Grade_5", "ASDiv_Grade_6", "GSM", "LeeTCode_submission", "MultiArith", "SVAMP",
+    "target_task_names": [# "LeeTCode_code_high", "LeeTCode_code_medium", "LeeTCode_code_low",
                           "olympic_OE_TO_maths_en_COMP", "olympic_OE_TO_physics_en_COMP",
-                          "olympic_TP_TO_maths_en_COMP", "olympic_TP_TO_physics_en_COMP"],
+                          "olympic_TP_TO_maths_en_COMP", "olympic_TP_TO_physics_en_COMP",
+                          "GSM", 
+                        #   "MultiArith", "SVAMP"
+                          #, "ASDiv"
+                          ],
+    
     # only select data
     "percentage": 0.05,
     "max_samples": None,
 
     # sample size
-    "sample_size": [5, 10, 50]
+    "sample_size": [5, 10]
 }
 
 matching_configs = [
     {
+        # llama2-7b
         "ckpts": [4, 8, 12, 16],
         "MODEL_NAME": "llama2-7b",
-        "checkpoint_weights": [1.8000000000000004e-05,
-                               1.2666666666666665e-05,
-                               7.333333333333333e-06,
-                               2.0000000000000003e-06],
+        "checkpoint_weights": [1.8e-05,
+                               1.26666666e-05,
+                               7.33333333e-06,
+                               2e-06],
 
         # 之前算出来的梯度的位置，训练集+测试集，需要读，记得改model_name
-        "base_path": "E:/backup_for_servicer/1_project/project_870_code/",
-        "gradient_path": "grads/llama2-7b-p0.05-lora-seed3/{}-ckpt{}-adam/dim8192/all_orig.pt",
-        "validation_gradient_path": "grads/llama2-7b-p0.05-lora-seed3/{}-ckpt{}-sgd/dim8192/all_orig.pt",
-        # 输出的地址
-        "ori_output_path": "E:/backup_for_servicer/1_project/analyse_result/870_code",
-        # todo 加上对分层的描述，这个先不急，之后可以有单独设置的参数，粗出现每个层自己做就好了
-
-        # layer config
-
-    },
-    {
-        # llama2-7b， 1700数据
-        "ckpts": [7, 15, 23, 28],
-        "MODEL_NAME": "llama2-7b",
-        "checkpoint_weights": [1.7777777777777777e-05,
-                               1.2222222222222222e-05,
-                               6.296296296296296e-06,
-                               1.4814814814814815e-06],
-
-        # 之前算出来的梯度的位置，训练集+测试集，需要读，记得改model_name
-        "base_path": "E:/backup_for_servicer/1_project/project_1700_code/",
+        "base_path": "/home/zhiyuan/dsw/project/LLM_Gradient/proj_less/",
         "gradient_path": "grads/llama2-7b-p0.05-lora-seed3/{}-ckpt{}-adam/layer_from_{}_to_{}/all_orig.pt",
         "validation_gradient_path": "grads/llama2-7b-p0.05-lora-seed3/{}-ckpt{}-sgd/layer_from_{}_to_{}/all_orig.pt",
+        
         # 输出的地址
-        "ori_output_path": "E:/backup_for_servicer/1_project/analyse_result/1700_code",
+        "ori_output_path": "/home/zhiyuan/dsw/project/LLM_Gradient/proj_less/score",
+        
+        # layer的设置，这里没有加上
     }
 ]
 
-N_SUBTASKS = {"mmlu": 57, "bbh": 27, "tydiqa": 9, "AQuA": 1, "GSM": 1, "ASDiv": 1, "ASDiv_Grade_1": 1,
-              "ASDiv_Grade_2": 1, "ASDiv_Grade_3": 1, "ASDiv_Grade_4": 1, "ASDiv_Grade_5": 1, "ASDiv_Grade_6": 1,
-              "GSM": 1, "LeeTCode_submission": 1, "MultiArith": 1, "SVAMP": 1, "olympic_OE_TO_maths_en_COMP": 1,
-              "olympic_OE_TO_physics_en_COMP": 1, "olympic_TP_TO_maths_en_COMP": 1, "olympic_TP_TO_physics_en_COMP": 1}
+N_SUBTASKS = {"mmlu": 57, "bbh": 27, "tydiqa": 9, "AQuA": 1, "GSM": 1, 
+              "ASDiv": 1, "ASDiv_Grade_1": 1,"ASDiv_Grade_2": 1, "ASDiv_Grade_3": 1, "ASDiv_Grade_4": 1, "ASDiv_Grade_5": 1, "ASDiv_Grade_6": 1,
+              "GSM": 1,  "MultiArith": 1, "SVAMP": 1, 
+              "olympic_OE_TO_maths_en_COMP": 1, "olympic_OE_TO_physics_en_COMP": 1, 
+              "olympic_TP_TO_maths_en_COMP": 1, "olympic_TP_TO_physics_en_COMP": 1,
+              "LeeTCode_submission": 1, "LeeTCode": 1, 
+              "LeeTCode_code_high": 1, "LeeTCode_code_medium": 1, "LeeTCode_code_low": 1,}
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -101,7 +92,7 @@ def new_matching(config):
             for sample_size in config["sample_size"]:
                 print("--------------------------------------------")
                 mmodel_name = config["MODEL_NAME"]
-                print(f"测试集为{target_task_name}, sample_size为 {sample_size}, model为 {mmodel_name}")
+                print(f"eval dataset: {target_task_name}, sample_size: {sample_size}, model: {mmodel_name}, layer: {current_layer_str}")
 
                 dataset_count = {"top5": {}, "top1": {}, }
                 data_id_count = {"top5": {}, "top1": {}, }
@@ -175,7 +166,7 @@ def new_matching(config):
                 print("\nfinish sample_size: ", sample_size)
 
                 # 确定存储地址
-                save_dir = os.path.join(config["ori_output_path"], f"/{sample_size}", config["MODEL_NAME"])
+                save_dir = os.path.join(config["ori_output_path"], f"{sample_size}", config["MODEL_NAME"])
                 os.makedirs(save_dir, exist_ok=True)
                 count_file_name = f"{target_task_name}_dataset_count_{sample_size}_{current_layer_str}.json"
                 id_file_name = f"{target_task_name}_data_id_count_{sample_size}_{current_layer_str}.json"
@@ -184,6 +175,7 @@ def new_matching(config):
                     json.dump(dataset_count, file, indent=4)
                 with open(os.path.join(save_dir, id_file_name), 'w') as file:
                     json.dump(data_id_count, file, indent=4)
+                print(f"finish saving")
 
 
 def new_select(config, score_dict, dataset_count, data_id_count):

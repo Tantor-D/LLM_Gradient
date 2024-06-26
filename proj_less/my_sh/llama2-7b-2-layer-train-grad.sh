@@ -35,6 +35,7 @@ do
         LOG_FILE="${OUTPUT_PATH}/processing.log"
 
         # 执行数据处理脚本
+        # ! 注意这里是我自己写的代码
         echo "Processing $TRAINING_DATA_NAME at checkpoint $CKPT..."
         python3 -m less.data_selection.my_get_info \
         --train_file $TRAINING_DATA_FILE \
