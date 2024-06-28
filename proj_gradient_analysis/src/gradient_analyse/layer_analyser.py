@@ -1,16 +1,26 @@
-"""
-读取前一步得到的json文件，组合为一个字典返回
-
-
-"""
-
 import os
 import json
 import copy
 import pandas as pd
 import matplotlib.pyplot as plt
 
+
 class LayerAnalyser:
+    """
+    A class used to analyze layer data from JSON files and visualize it in Excel and bar charts.
+
+    Attributes:
+        dataset_name_list (list[str]): A list of dataset names.
+        model_name (str): The name of the model being analyzed.
+        sample_size (int): The size of the sample data.
+        base_data_dir (str): The base directory where data is stored.
+        save_dir (str): The directory where results will be saved.
+        from_layer_list (list[int]): List of starting layers.
+        end_layer_list (list[int]): List of ending layers.
+        dataset_data (dict): Data read from JSON files.
+        percent_dataset_data (dict): Data converted to percentages.
+    """
+
     def __init__(self,
                  dataset_name_list: list[str],
                  model_name: str,
@@ -18,6 +28,16 @@ class LayerAnalyser:
                  base_data_dir: str,
                  save_dir: str,
                  ):
+        """
+        Initializes the LayerAnalyser with dataset names, model name, sample size, and directories.
+
+        Args:
+            dataset_name_list (list[str]): A list of dataset names.
+            model_name (str): The name of the model being analyzed.
+            sample_size (int): The size of the sample data.
+            base_data_dir (str): The base directory where data is stored.
+            save_dir (str): The directory where results will be saved.
+        """
         self.dataset_name_list = dataset_name_list
 
         self.model_name = model_name
@@ -26,6 +46,8 @@ class LayerAnalyser:
         self.base_data_dir: str = base_data_dir
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
+
+        self.sample_size = sample_size
 
         # 需要后续进一步计算指定
         self.from_layer_list = [i for i in range(0, 32)]
@@ -36,8 +58,16 @@ class LayerAnalyser:
 
     def read_json_data(self, base_data_dir, dataset_name_list, sample_size: int):
         """
-        获取json文件中的数据，以字典的形式返回
+        Reads data from JSON files and returns it as a dictionary.
         暂时只会读取dataset_count文件，不会读data id的文件
+
+        Args:
+            base_data_dir (str): The base directory where data is stored.
+            dataset_name_list (list[str]): A list of dataset names.
+            sample_size (int): The size of the sample data.
+
+        Returns:
+            dict: A dictionary containing the data read from JSON files.
         """
         json_dir = os.path.join(base_data_dir, str(sample_size), self.model_name)
 
@@ -68,10 +98,15 @@ class LayerAnalyser:
 
         return ret_data
 
-
     def trans_to_percent_data(self, data):
         """
-        将原始数据转换为百分比数据
+        Converts raw data to percentage data.
+
+        Args:
+            data (dict): The raw data to be converted.
+
+        Returns:
+            dict: The data converted to percentages.
         """
         ret_data = copy.deepcopy(data)
         for dataset_name, dataset_data in ret_data.items():
@@ -84,8 +119,14 @@ class LayerAnalyser:
                         ret_data[dataset_name][layer][top_key][data_key] = (data_value / summ) * 100
         return ret_data
 
-
     def trans_to_excel(self, json_data, output_file):
+        """
+        Converts JSON data to an Excel file.
+
+        Args:
+            json_data (dict): The JSON data to be converted.
+            output_file (str): The path to the output Excel file.
+        """
         # 创建Excel写入器
         writer = pd.ExcelWriter(output_file, engine='openpyxl')
 
@@ -121,18 +162,44 @@ class LayerAnalyser:
         # 关闭Excel写入器，保存文件
         writer.close()
 
-    def generate_bar_chart_from_excel(self, input_file):
+    def generate_bar_chart_from_excel(self, input_file, sheet_name_key_words: list[str] = None):
+        """
+        Generates bar charts from an Excel file, with specific colors for different codes.
+
+        Args:
+            input_file (str): The path to the input Excel file.
+            sheet_name_key_words (list[str], optional): A list of keywords to filter sheet names. Defaults to None.
+        """
         # 读取Excel文件中的所有工作表
         xls = pd.ExcelFile(input_file)
 
+        # 定义颜色映射
+        color_map = {'code_high': 'orange', 'code_medium': 'blue', 'code_low': 'green'}
+
         # 遍历每个工作表
         for sheet_name in xls.sheet_names:
+            # 如果指定了关键字，只处理包含关键字的工作表
+            flag_ignore = False
+            if sheet_name_key_words is not None:
+                flag_ignore = True
+                for sheet_key_word in sheet_name_key_words:
+                    if sheet_key_word in sheet_name:
+                        flag_ignore = False
+            if flag_ignore:
+                continue
+
             # 读取当前工作表的数据，将第一列设置为索引
             df = pd.read_excel(xls, sheet_name=sheet_name, index_col=0)
 
+            # 对列进行排序，以便 code_high, code_medium, code_low 的顺序
+            df = df[['code_high', 'code_medium', 'code_low']]
+
+            # 获取列名并映射颜色
+            colors = [color_map.get(col, 'gray') for col in df.columns]
+
             # 绘制柱状图
             plt.figure(figsize=(10, 6))  # 增加图表尺寸
-            ax = df.plot(kind='bar', width=0.8)
+            ax = df.plot(kind='bar', width=0.8, color=colors)
             ax.set_title(sheet_name)  # 设置图表标题为工作表名称
             ax.set_xlabel('Layer')  # 设置x轴标签
             ax.set_ylabel('Values')  # 设置y轴标签
@@ -140,17 +207,14 @@ class LayerAnalyser:
             # 设置x轴标签，使用90度旋转
             ax.set_xticklabels(df.index, rotation=90, ha='center')
 
-            # 显示图例
+            # 显示图例，调整布局以防止标签被截断
             plt.legend(title='Codes')
-
-            # 调整布局以防止标签被截断
             plt.tight_layout()
-
-            # 展示图表
             plt.show()
 
+
 if __name__ == "__main__":
-    need_write_to_excel = False
+    need_write_to_excel = True
 
     dataset_names = ["LeeTCode_code_high", "LeeTCode_code_medium", "LeeTCode_code_low",
                      "olympic_OE_TO_maths_en_COMP", "olympic_OE_TO_physics_en_COMP",
@@ -166,10 +230,13 @@ if __name__ == "__main__":
 
     # 将数据写入Excel文件
     if need_write_to_excel:
-        layer_analyser.trans_to_excel(layer_analyser.dataset_data, os.path.join(layer_analyser.save_dir, "dataset_count_ori.xlsx"))
-        layer_analyser.trans_to_excel(layer_analyser.percent_dataset_data, os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"))
+        layer_analyser.trans_to_excel(layer_analyser.dataset_data,
+                                      os.path.join(layer_analyser.save_dir, "dataset_count_ori.xlsx"))
+        layer_analyser.trans_to_excel(layer_analyser.percent_dataset_data,
+                                      os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"))
 
     # 根据得到的excel文件生成柱状图
-    layer_analyser.generate_bar_chart_from_excel(os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"))
+    layer_analyser.generate_bar_chart_from_excel(os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"),
+                                                 ["top5"])
 
     print("aaa")
