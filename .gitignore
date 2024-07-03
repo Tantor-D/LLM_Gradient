@@ -1,4 +1,6 @@
 /proj_gradient_analysis/source_data/
+/proj_gradient_analysis/old/
+/proj_gradient_analysis/analyse_result/
 /proj_less/LESS/wandb/
 /proj_less/LESS/less.egg-info/
 /proj_less/grads/

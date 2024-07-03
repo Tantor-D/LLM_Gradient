@@ -1,13 +1,16 @@
 import os
 import json
 import copy
+
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+import statistics
 
 class LayerAnalyser:
     """
     A class used to analyze layer data from JSON files and visualize it in Excel and bar charts.
+    尽量写代码的时候都弄成 json -> excel -> pic。 毕竟excel和pic是最终的展示形式，都是需要的。
 
     Attributes:
         dataset_name_list (list[str]): A list of dataset names.
@@ -162,13 +165,19 @@ class LayerAnalyser:
         # 关闭Excel写入器，保存文件
         writer.close()
 
-    def generate_bar_chart_from_excel(self, input_file, sheet_name_key_words: list[str] = None):
+    def generate_bar_chart_from_excel(self,
+                                      input_file,
+                                      sheet_name_key_words: list[str] = None,
+                                      save_pic_dir: str = None,
+                                      limit_y: int = None):
         """
         Generates bar charts from an Excel file, with specific colors for different codes.
 
         Args:
             input_file (str): The path to the input Excel file.
             sheet_name_key_words (list[str], optional): A list of keywords to filter sheet names. Defaults to None.
+            save_pic_dir (str, optional): The directory where the bar charts will be saved. Defaults to None.
+            limit_y (int, optional): The maximum value for the y-axis. Defaults to None.
         """
         # 读取Excel文件中的所有工作表
         xls = pd.ExcelFile(input_file)
@@ -176,16 +185,14 @@ class LayerAnalyser:
         # 定义颜色映射
         color_map = {'code_high': 'orange', 'code_medium': 'blue', 'code_low': 'green'}
 
+        if save_pic_dir:
+            os.makedirs(save_pic_dir, exist_ok=True)
+
         # 遍历每个工作表
         for sheet_name in xls.sheet_names:
-            # 如果指定了关键字，只处理包含关键字的工作表
-            flag_ignore = False
-            if sheet_name_key_words is not None:
-                flag_ignore = True
-                for sheet_key_word in sheet_name_key_words:
-                    if sheet_key_word in sheet_name:
-                        flag_ignore = False
-            if flag_ignore:
+            # 如果指定了关键字，只处理包含关键字的工作表，表名一般为：LeeTCode_code_high_top1 这样
+            if sheet_name_key_words is not None and all(
+                    sheet_key_word not in sheet_name for sheet_key_word in sheet_name_key_words):
                 continue
 
             # 读取当前工作表的数据，将第一列设置为索引
@@ -203,6 +210,8 @@ class LayerAnalyser:
             ax.set_title(sheet_name)  # 设置图表标题为工作表名称
             ax.set_xlabel('Layer')  # 设置x轴标签
             ax.set_ylabel('Values')  # 设置y轴标签
+            if limit_y is not None:
+                ax.set_ylim(0, limit_y)  # 设置y轴范围为0到100
 
             # 设置x轴标签，使用90度旋转
             ax.set_xticklabels(df.index, rotation=90, ha='center')
@@ -210,11 +219,83 @@ class LayerAnalyser:
             # 显示图例，调整布局以防止标签被截断
             plt.legend(title='Codes')
             plt.tight_layout()
+
+            # 保存图表
+            if save_pic_dir is not None:
+                plt.savefig(os.path.join(save_pic_dir, f'{sheet_name}.png'))
+                plt.close()
+
             plt.show()
+
+    def analyse_layer(self,
+                      excel_file,
+                      save_folder,
+                      top1_or_top5: str = "top1"):
+        """
+        Analyzes the layer data.
+        仅计算top1的数据。code_high, code_medium, code_low 分开计算，综合考量每一层跨越不同数据集得到的结果，计算占比的平均值和方差。
+
+        Args:
+            excel_file (str):
+
+
+        """
+        xls = pd.ExcelFile(excel_file)
+
+        # 字典，读取了所有的数据，第一层key是训练集数据的名字，第二层key是layer，value为列表
+        train_dataset_names = ["code_high", "code_medium", "code_low"]
+        all_data = {"code_high": {}, "code_medium": {}, "code_low": {}}
+
+        # 把所有的数据加载到all_data中
+        for ii, sheet_name in enumerate(xls.sheet_names):
+            # 仅处理top1 或 top5的 sheet_name
+            if top1_or_top5 not in sheet_name:
+                continue
+            print("in analyse_layer(), sheet_name: ", sheet_name)
+
+            # 读取当前工作表的数据，将第一列设置为索引
+            df = pd.read_excel(xls, sheet_name=sheet_name, index_col=0, header=0)
+
+            # 获取数据
+            layer_names = df.index.to_list()
+            for layer_name in layer_names:
+                for train_set_name in train_dataset_names:
+                    # 如果没有这个key（layer的名字，excel的行名），就创建一个空列表
+                    if layer_name not in all_data[train_set_name]:
+                        all_data[train_set_name][layer_name] = []
+
+                    # 处理nan的特殊情况
+                    loc_val = df.loc[layer_name, train_set_name]
+                    loc_val = loc_val if (not np.isnan(loc_val)) else 0
+                    all_data[train_set_name][layer_name].append(loc_val)
+
+        # 把数据处理成平均值和方差
+        processed_mean = {"code_high": {}, "code_medium": {}, "code_low": {}}
+        processed_varience = {"code_high": {}, "code_medium": {}, "code_low": {}}
+        processed_std = {"code_high": {}, "code_medium": {}, "code_low": {}}
+        for train_set_name in all_data.keys():
+            for layer_name in all_data[train_set_name].keys():
+                processed_mean[train_set_name][layer_name] = statistics.mean(all_data[train_set_name][layer_name])
+                processed_varience[train_set_name][layer_name] = statistics.variance(all_data[train_set_name][layer_name])
+
+                # 两种计算标准差的方法，一个是样本标准差stdev，一个是总体标准差pstdev
+                processed_std[train_set_name][layer_name] = statistics.pstdev(all_data[train_set_name][layer_name])
+                # processed_std[train_set_name][layer_name] = statistics.stdev(all_data[train_set_name][layer_name])
+
+        # 将结果写入Excel文件
+        mean_file = os.path.join(save_folder, 'layer_mean.xlsx')
+        var_file = os.path.join(save_folder, 'layer_variance.xlsx')
+        sed_file = os.path.join(save_folder, 'layer_std.xlsx')
+
+        pd.DataFrame(processed_mean).to_excel(mean_file, index=True)
+        pd.DataFrame(processed_varience).to_excel(var_file, index=True)
+        pd.DataFrame(processed_std).to_excel(sed_file, index=True)
 
 
 if __name__ == "__main__":
-    need_write_to_excel = True
+    need_write_to_excel = False
+    need_generate_bar_chart = False
+    need_analyse_layer = True
 
     dataset_names = ["LeeTCode_code_high", "LeeTCode_code_medium", "LeeTCode_code_low",
                      "olympic_OE_TO_maths_en_COMP", "olympic_OE_TO_physics_en_COMP",
@@ -235,8 +316,18 @@ if __name__ == "__main__":
         layer_analyser.trans_to_excel(layer_analyser.percent_dataset_data,
                                       os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"))
 
-    # 根据得到的excel文件生成柱状图
-    layer_analyser.generate_bar_chart_from_excel(os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"),
-                                                 ["top5"])
+    # 根据得到的excel文件生成柱状图，此处是生成top1和top5的柱状图，用的是100比的数据
+    if need_generate_bar_chart:
+        layer_analyser.generate_bar_chart_from_excel(
+            input_file=os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"),
+            sheet_name_key_words=["top1", "top5"],
+            save_pic_dir=os.path.join(layer_analyser.save_dir, "bar_chart"),
+            limit_y=100)
 
-    print("aaa")
+    if need_analyse_layer:
+        layer_analyser.analyse_layer(
+            os.path.join(layer_analyser.save_dir, "dataset_count_percent.xlsx"),
+            save_folder=layer_analyser.save_dir,
+            top1_or_top5="top1")
+
+    print("process ended")
